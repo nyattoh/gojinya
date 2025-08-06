@@ -1,39 +1,54 @@
-import tweepy
+# post_to_x.py
 import os
-import datetime
+import argparse
+import tweepy
 
-# X APIの認証情報を環境変数から取得
-api_key = os.getenv('X_API_KEY')
-api_secret_key = os.getenv('X_API_SECRET_KEY')
-access_token = os.getenv('X_ACCESS_TOKEN')
-access_token_secret = os.getenv('X_ACCESS_TOKEN_SECRET')
+def get_api():
+    auth = tweepy.OAuth1UserHandler(
+        consumer_key    = os.getenv('X_API_KEY'),
+        consumer_secret = os.getenv('X_API_SECRET_KEY'),
+        access_token    = os.getenv('X_ACCESS_TOKEN'),
+        access_token_secret = os.getenv('X_ACCESS_TOKEN_SECRET')
+    )
+    return tweepy.API(auth)
 
-# Tweepyを使用してAPI認証
-auth = tweepy.OAuth1UserHandler(consumer_key=api_key, consumer_secret=api_secret_key,
-                                 access_token=access_token, access_token_secret=access_token_secret)
-api = tweepy.API(auth)
+def main():
+    parser = argparse.ArgumentParser(description="Post media to X")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--file',   help="Path to media file and auto-read matching .txt for text")
+    group.add_argument('--video',  help="Path to video file (requires --text)")
+    parser.add_argument('--text',  help="Text content or path to text file", required=False)
+    args = parser.parse_args()
 
-# 現在の日付と時間を取得
-now = datetime.datetime.utcnow()  # UTCで取得
+    api = get_api()
 
-# ファイル名の生成
-if now.hour == 5:
-    # 午前5時の動画とテキスト
-    video_path = f"content/{now.strftime('%Y%m%d')}05.mp4"
-    text_path = f"content/{now.strftime('%y%m%d')}05.txt"
-elif now.hour == 17:
-    # 午後5時の動画とテキスト
-    video_path = f"content/{now.strftime('%Y%m%d')}17.mp4"
-    text_path = f"content/{now.strftime('%y%m%d')}17.txt"
-else:
-    raise Exception("Invalid time for posting")
+    # 汎用的にファイルとテキストを取り扱う
+    if args.file:
+        media_path = args.file
+        # 同名の .txt があれば自動読み込み
+        base = os.path.splitext(media_path)[0]
+        txt_path = f"{base}.txt"
+        if os.path.isfile(txt_path):
+            with open(txt_path, encoding='utf-8') as f:
+                text = f.read()
+        else:
+            text = ""
+    else:
+        # --video が指定された場合は --text 必須
+        if not args.text:
+            parser.error("--video を使うときは --text を指定してください")
+        media_path = args.video
+        # 引数がファイルパスなら中身を、直接テキストならそのまま
+        if os.path.isfile(args.text):
+            with open(args.text, encoding='utf-8') as f:
+                text = f.read()
+        else:
+            text = args.text
 
-# 投稿するテキストファイルを読み込む
-with open(text_path, 'r', encoding='utf-8') as file:
-    text = file.read()
+    # メディアアップロード＆投稿
+    media = api.media_upload(media_path)
+    api.update_status(status=text, media_ids=[media.media_id_string])
+    print(f"Posted {media_path} with text length {len(text)}")
 
-# 動画のアップロード
-media = api.media_upload(video_path)
-
-# 投稿
-api.update_status(status=text, media_ids=[media.media_id_string])
+if __name__ == '__main__':
+    main()
