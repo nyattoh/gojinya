@@ -66,8 +66,8 @@ jobs:
           X_ACCESS_TOKEN_SECRET:   ${{ secrets.X_ACCESS_TOKEN_SECRET }}
         run: |
           # UTC から YYYYMMDDHH と YYMMDDHH 形式を生成
-          NOW_FULL=$(date -u +%Y%m%d%H)
-          NOW_SHORT=$(date -u +%y%m%d%H)
+          NOW_FULL=$(TZ=Asia/Tokyo date +%Y%m%d%H)
+          NOW_SHORT=$(TZ=Asia/Tokyo date +%y%m%d%H)
           VIDEO="content/${NOW_FULL}.mp4"
           TEXT="content/${NOW_SHORT}.txt"
 
