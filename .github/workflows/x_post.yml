@@ -1,0 +1,39 @@
+name: Post to X
+
+on:
+  schedule:
+    # 毎日午前5時と午後5時（JST）に投稿するための設定
+    # 5:00 JST → 20:00 UTC
+    # 17:00 JST → 08:00 UTC
+    - cron: '0 20,8 * * *'  # UTC時間で5:00 JSTと17:00 JST
+  push:
+    branches:
+      - main
+    paths:
+      - 'content/**'  # 投稿対象のディレクトリ
+
+jobs:
+  post_to_x:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          pip install tweepy requests
+
+      - name: Post to X
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET_KEY: ${{ secrets.X_API_SECRET_KEY }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+        run: |
+          python post_to_x.py
