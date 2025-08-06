@@ -1,63 +1,79 @@
 name: Post to X
 
 on:
-  schedule:
-    # 毎日午前5時と午後5時（JST）に投稿するための設定
-    # 5:00 JST → 20:00 UTC
-    # 17:00 JST → 08:00 UTC
-    - cron: '0 20,8 * * *'  # UTC時間で5:00 JSTと17:00 JST
   push:
     branches:
       - main
     paths:
-      - 'content/**'  # 投稿対象のディレクトリ
+      - 'content/**'
+  schedule:
+    # UTC 08:00 → JST 17:00
+    # UTC 20:00 → JST 05:00
+    - cron: '0 8,20 * * *'
 
 jobs:
+  # 1) 即時投稿ジョブ (Push トリガー)
   immediate_post:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Gather changed files
         id: changed
         run: |
-          # コミットに追加 or 変更されたファイル一覧を取得
           FILES=$(jq -r '.commits[].added[], .commits[].modified[]' < "$GITHUB_EVENT_PATH")
-          echo "All changed files: $FILES"
           echo "::set-output name=list::$FILES"
 
       - name: Pick last non-datetime file
-        id: filter
+        id: pick
         run: |
           FILES="${{ steps.changed.outputs.list }}"
-          # 「YYYYMMDDHH.mp4」「YYMMDDHH.txt」形式を除外
+          # 日付時刻形式ファイルを除外
           NON_DT=$(echo "$FILES" | grep -Ev '^[0-9]{10}\.(mp4|txt)$' || true)
-          # 最後の１行だけ抽出
+          # 最後に出現したファイル名を取得
           LAST=$(echo "$NON_DT" | tr ' ' '\n' | tail -n1)
-          echo "Last non-datetime file: $LAST"
           echo "::set-output name=last::$LAST"
 
-      - name: Post last file (and its .txt if exists)
-        if: steps.filter.outputs.last != ''
+      - name: Post last file (auto-read matching .txt)
+        if: steps.pick.outputs.last != ''
         env:
           X_API_KEY:               ${{ secrets.X_API_KEY }}
           X_API_SECRET_KEY:        ${{ secrets.X_API_SECRET_KEY }}
           X_ACCESS_TOKEN:          ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_TOKEN_SECRET:   ${{ secrets.X_ACCESS_TOKEN_SECRET }}
         run: |
-          FILE="${{ steps.filter.outputs.last }}"
-          BASE=$(basename "$FILE" | sed 's/\.[^.]*$//')
-          TXT_PATH="content/${BASE}.txt"
+          FILE="${{ steps.pick.outputs.last }}"
+          echo "→ Posting content/$FILE"
+          python post_to_x.py --file "content/$FILE"
 
-          if [ -f "$TXT_PATH" ]; then
-            # .txt があれば内容を読み込んで一緒に投稿
-            TEXT=$(< "$TXT_PATH")
-            echo "→ Posting $FILE with text from $TXT_PATH"
-            python post_to_x.py --file "content/$FILE" --text "$TEXT"
+  # 2) 予約投稿ジョブ (Schedule トリガー)
+  scheduled_post:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Post scheduled datetime files
+        env:
+          X_API_KEY:               ${{ secrets.X_API_KEY }}
+          X_API_SECRET_KEY:        ${{ secrets.X_API_SECRET_KEY }}
+          X_ACCESS_TOKEN:          ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET:   ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+        run: |
+          # UTC から YYYYMMDDHH と YYMMDDHH 形式を生成
+          NOW_FULL=$(date -u +%Y%m%d%H)
+          NOW_SHORT=$(date -u +%y%m%d%H)
+          VIDEO="content/${NOW_FULL}.mp4"
+          TEXT="content/${NOW_SHORT}.txt"
+
+          if [ -f "$VIDEO" ] && [ -f "$TEXT" ]; then
+            echo "→ Scheduled posting: $VIDEO + $TEXT"
+            python post_to_x.py --video "$VIDEO" --text "$TEXT"
           else
-            echo "→ Posting $FILE (no matching .txt)"
-            python post_to_x.py --file "content/$FILE"
+            echo "No scheduled files for ${NOW_FULL}/${NOW_SHORT}"
           fi
