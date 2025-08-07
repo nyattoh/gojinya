@@ -12,9 +12,9 @@ on:
     - cron: '0 8,20 * * *'
 
 jobs:
-  # 1) 即時投稿ジョブ (Push トリガー)
-  immediate_post:
-    if: github.event_name == 'push'
+  # ────────────────
+  immediate_post:  # プッシュイベント時のみ実行
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -24,34 +24,32 @@ jobs:
       - name: Gather changed files
         id: changed
         run: |
-          FILES=$(jq -r '.commits[].added[], .commits[].modified[]' < "$GITHUB_EVENT_PATH")
+          # null 安全にコミット差分を取得
+          FILES=$(jq -r '.commits // [] | .[].added[], .[].modified[]' < "$GITHUB_EVENT_PATH")
           echo "::set-output name=list::$FILES"
 
       - name: Pick last non-datetime file
         id: pick
         run: |
           FILES="${{ steps.changed.outputs.list }}"
-          # 日付時刻形式ファイルを除外
           NON_DT=$(echo "$FILES" | grep -Ev '^[0-9]{10}\.(mp4|txt)$' || true)
-          # 最後に出現したファイル名を取得
           LAST=$(echo "$NON_DT" | tr ' ' '\n' | tail -n1)
           echo "::set-output name=last::$LAST"
 
       - name: Post last file (auto-read matching .txt)
-        if: steps.pick.outputs.last != ''
+        if: ${{ steps.pick.outputs.last != '' }}
         env:
-          X_API_KEY:               ${{ secrets.X_API_KEY }}
-          X_API_SECRET_KEY:        ${{ secrets.X_API_SECRET_KEY }}
-          X_ACCESS_TOKEN:          ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_TOKEN_SECRET:   ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          X_API_KEY:             ${{ secrets.X_API_KEY }}
+          X_API_SECRET_KEY:      ${{ secrets.X_API_SECRET_KEY }}
+          X_ACCESS_TOKEN:        ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
         run: |
           FILE="${{ steps.pick.outputs.last }}"
-          echo "→ Posting content/$FILE"
           python post_to_x.py --file "content/$FILE"
 
-  # 2) 予約投稿ジョブ (Schedule トリガー)
-  scheduled_post:
-    if: github.event_name == 'schedule'
+  # ────────────────
+  scheduled_post:  # 予約投稿（スケジュール）時のみ実行
+    if: ${{ github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -60,19 +58,18 @@ jobs:
 
       - name: Post scheduled datetime files
         env:
-          X_API_KEY:               ${{ secrets.X_API_KEY }}
-          X_API_SECRET_KEY:        ${{ secrets.X_API_SECRET_KEY }}
-          X_ACCESS_TOKEN:          ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_TOKEN_SECRET:   ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          X_API_KEY:             ${{ secrets.X_API_KEY }}
+          X_API_SECRET_KEY:      ${{ secrets.X_API_SECRET_KEY }}
+          X_ACCESS_TOKEN:        ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
         run: |
-          # UTC から YYYYMMDDHH と YYMMDDHH 形式を生成
+          # JST でファイル名を生成
           NOW_FULL=$(TZ=Asia/Tokyo date +%Y%m%d%H)
           NOW_SHORT=$(TZ=Asia/Tokyo date +%y%m%d%H)
           VIDEO="content/${NOW_FULL}.mp4"
           TEXT="content/${NOW_SHORT}.txt"
 
           if [ -f "$VIDEO" ] && [ -f "$TEXT" ]; then
-            echo "→ Scheduled posting: $VIDEO + $TEXT"
             python post_to_x.py --video "$VIDEO" --text "$TEXT"
           else
             echo "No scheduled files for ${NOW_FULL}/${NOW_SHORT}"
