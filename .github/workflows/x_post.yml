@@ -19,22 +19,48 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Ensure tooling (jq)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install tweepy
 
       - name: Gather changed files
         id: changed
         run: |
           # null 安全にコミット差分を取得
-          FILES=$(jq -r '.commits // [] | .[].added[], .[].modified[]' < "$GITHUB_EVENT_PATH")
-          echo "::set-output name=list::$FILES"
+          FILES=$(jq -r '.commits // [] | .[].added[], .[].modified[]' < "$GITHUB_EVENT_PATH" | tr '\n' ' ')
+          echo "list=$FILES" >> "$GITHUB_OUTPUT"
 
-      - name: Pick last non-datetime file
+      - name: Pick last non-datetime media (.mp4)
         id: pick
         run: |
           FILES="${{ steps.changed.outputs.list }}"
-          NON_DT=$(echo "$FILES" | grep -Ev '^[0-9]{10}\.(mp4|txt)$' || true)
-          LAST=$(echo "$NON_DT" | tr ' ' '\n' | tail -n1)
-          echo "::set-output name=last::$LAST"
+          LAST=""
+          for f in $FILES; do
+            # 対象: content/ 内の .mp4 のみ
+            case "$f" in
+              content/*.mp4)
+                base=$(basename "$f")
+                if echo "$base" | grep -Eq '^[0-9]{10}\.mp4$'; then
+                  continue
+                fi
+                LAST="$f"
+                ;;
+            esac
+          done
+          echo "last=$LAST" >> "$GITHUB_OUTPUT"
 
       - name: Post last file (auto-read matching .txt)
         if: ${{ steps.pick.outputs.last != '' }}
@@ -44,8 +70,12 @@ jobs:
           X_ACCESS_TOKEN:        ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
         run: |
+          if [ -z "$X_API_KEY" ] || [ -z "$X_API_SECRET_KEY" ] || [ -z "$X_ACCESS_TOKEN" ] || [ -z "$X_ACCESS_TOKEN_SECRET" ]; then
+            echo "Required X API secrets are not set. Skipping post." >&2
+            exit 1
+          fi
           FILE="${{ steps.pick.outputs.last }}"
-          python post_to_x.py --file "content/$FILE"
+          python post_to_x.py --file "$FILE"
 
   # ────────────────
   scheduled_post:  # 予約投稿（スケジュール）時のみ実行
@@ -54,7 +84,17 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install tweepy
 
       - name: Post scheduled datetime files
         env:
@@ -64,13 +104,17 @@ jobs:
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
         run: |
           # JST でファイル名を生成
-          NOW_FULL=$(TZ=Asia/Tokyo date +%Y%m%d%H)
-          NOW_SHORT=$(TZ=Asia/Tokyo date +%y%m%d%H)
-          VIDEO="content/${NOW_FULL}.mp4"
-          TEXT="content/${NOW_SHORT}.txt"
+          NOW=$(TZ=Asia/Tokyo date +%Y%m%d%H)
+          VIDEO="content/${NOW}.mp4"
+          TEXT="content/${NOW}.txt"
+
+          if [ -z "$X_API_KEY" ] || [ -z "$X_API_SECRET_KEY" ] || [ -z "$X_ACCESS_TOKEN" ] || [ -z "$X_ACCESS_TOKEN_SECRET" ]; then
+            echo "Required X API secrets are not set. Skipping post." >&2
+            exit 1
+          fi
 
           if [ -f "$VIDEO" ] && [ -f "$TEXT" ]; then
             python post_to_x.py --video "$VIDEO" --text "$TEXT"
           else
-            echo "No scheduled files for ${NOW_FULL}/${NOW_SHORT}"
+            echo "No scheduled files for ${NOW}"
           fi
